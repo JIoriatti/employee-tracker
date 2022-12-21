@@ -62,6 +62,14 @@ const promptList = [
         name: 'new_employee_name',
         message: 'Please enter the first and last name of the employee you would like to add.',
         //-- Add validation--
+        validate: function(answer){
+            if((answer.match(/ /g) || []).length === 1){
+                return true;
+            }
+            else{
+                return "Please enter the first and last name seperated by a space.";
+            }
+        },
         when(choice){
             return choice.user_options === 'Add an employee'
         }
@@ -86,14 +94,61 @@ const promptList = [
         }
     },
     {
-        type: 'input',
+        type: 'list',
         name: 'new_employee_manager',
-        message: (answers)=>`Please enter the name of the manager of ${answers.new_employee_name}: `,
-        //-- Add validation--
+        message: (answers)=>`Please select the manager of ${answers.new_employee_name}: `,
+        choices: async function(){
+            let response = [];
+            await db.promise().query(`SELECT first_name, last_name FROM employee`)
+            .then(([rows,fields])=>{
+                for(let i = 0; i<rows.length;i++){
+                    let concat = rows[i].first_name + ' ' + rows[i].last_name;
+                    response.push(concat);
+                }
+            })
+            return response;
+        },
         when(choice){
             return choice.new_employee_role
         }
     },
+    {
+        type:'list',
+        name: 'update_employee',
+        message: `Which employee's role do you want to update?`,
+        choices: async function(){
+            let response = [];
+            await db.promise().query(`SELECT first_name, last_name FROM employee`)
+            .then(([rows,fields])=>{
+                for(let i = 0; i<rows.length;i++){
+                    let concat = rows[i].first_name + ' ' + rows[i].last_name;
+                    response.push(concat);
+                }
+            })
+            return response;
+        },
+        when(choice){
+            return choice.user_options === "Update an employee role";
+        }
+    },
+    {
+        type: 'list',
+        name: 'update_employee_role',
+        message: (answer)=> {`Which role do you want to assign for ${answer}?`},
+        choices: async function(){
+            let response = [];
+            await db.promise().query(`SELECT title FROM role`)
+            .then(([rows,fields])=>{
+                for(let i = 0; i<rows.length;i++){
+                    response.push(rows[i].title);
+                }
+            })
+            return response;
+        },
+        when(choice){
+            return choice.update_employee;
+        }
+    }
     
 ]
 
@@ -129,7 +184,7 @@ const prompt = () =>{
             addEmployee(splitName[0],splitName[1],answer.new_employee_role,manSplitName[0], manSplitName[1]);
         }
         if(answer.user_options === "Update an employee role"){
-            updateEmployeeRole();
+            updateEmployeeRole(answer.update_employee,answer.update_employee_role);
         }
         if(answer.user_options === "Quit"){
             db.end();
@@ -158,7 +213,7 @@ const viewRoles = () =>{
     })
 }
 const viewEmployees = () =>{
-    db.promise().query(`SELECT * FROM employee JOIN role ON employee.role_id = role.id`)
+    db.promise().query(`SELECT * FROM department JOIN role ON department.id = role.department_id JOIN employee ON role.id = employee.role_id`)
     .then(([rows, fields]) =>{
         console.table(rows);
         prompt();
@@ -168,29 +223,43 @@ const viewEmployees = () =>{
     })
 }
 
-const addEmployee = (fName,Lname,role,mFirst, mLast) =>{
-    let roleID;
-    let manID;
-    db.promise().query(`SELECT id FROM employee WHERE first_name = '${mFirst}' AND last_name = '${mLast}'`)
+
+const getManID = async (mFirst,mLast) =>{
+    let id;
+    await db.promise().query(`SELECT id FROM employee WHERE first_name = '${mFirst}' AND last_name = '${mLast}'`)
     .then(([rows,fields])=>{
-        manID = rows[0].id
-        db.promise().query(`SELECT id FROM role WHERE title = '${role}'`)
-        .then(([rows,fields])=>{
-            roleID = rows[0].id
-            let insert = `INSERT INTO employee(first_name,last_name,role_id,manager_id)VALUES ('${fName}','${Lname}','${roleID}','${manID}')`
-            db.promise().query(insert)
-            .then((result)=>{
-                viewEmployees();
-                prompt();
-            })
-            .catch(err=>{
+        id = rows[0].id
+    })
+    return id;
+}
+const getRoleID = async (role) =>{
+    let id;
+    await db.promise().query(`SELECT id FROM role WHERE title = '${role}'`)
+    .then(([rows,fields])=>{
+        id = rows[0].id
+    })
+    return id;
+}
+
+//Figuring out the async/await with promise() wrapper for DB query took me A LONG TIME to figure out
+//The key was to add await WITH promise() wrapper on DB query, otherwise getManID and getRoleID would
+//always return undefined, despite the query in those functions returning the proper data.
+const addEmployee = async (fName,Lname,role,mFirst,mLast) =>{
+    let manID = await getManID(mFirst,mLast);
+    let roleID = await getRoleID(role);
+    try{
+        db.query(`INSERT INTO employee(first_name,last_name,role_id,manager_id)VALUES ('${fName}','${Lname}','${roleID}','${manID}')`,(err,result)=>{
+            if(err){
                 throw err;
-            })
+            }
+            console.log('----------------')
+            console.log('Employee Added!')
+            viewEmployees();
         })
-    }) 
-
-
-
+    }
+    catch(error){
+        console.log(error);
+    }
 }
 const addRole = (name,sal,dep) =>{
     //Initializing a variable to store the response of the query into (id of department)
@@ -201,28 +270,49 @@ const addRole = (name,sal,dep) =>{
         dep_ID = rows[0].id;
         db.promise().query(`INSERT INTO role(title,salary,department_id)VALUES('${name}','${sal}','${dep_ID}')`)
         .then(([rows, fields]) =>{
+            console.log("Role Added: ", rows.affectedRows);
+            console.log('----------------');
             viewRoles();
-            prompt();
         })
         .catch((err)=>{
             throw err;
         })
-    } 
-    )
+    })
 }
 const addDepartment = (dept_name) =>{
     db.promise().query(`INSERT INTO department(name)VALUES ('${dept_name}')`)
     .then(([rows, fields]) =>{
         db.promise().query(`SELECT * FROM department`)
         .then(([rows, fields]) =>{
-            console.table(rows);
+            console.log('----------------');
             console.log("Department successfully added!")
+            console.table(rows);
             prompt();
         })
         .catch(err=>{
             throw err;
         })
     })
+}
+const getRoleID2 = async (empName)=>{
+    let splitName = empName.split(' ');
+    let roleID;
+    await db.promise().query(`SELECT role_id FROM employee WHERE first_name = '${splitName[0]}' AND last_name = '${splitName[1]}'`)
+    .then(([rows,fields])=>{
+        roleID =  rows[0].role_id;
+    })
+    return roleID
+}
+const updateEmployeeRole = async (empName, empNewRole)=>{
+    let oldRoleID = await getRoleID2(empName);
+    let newRoleID = await getRoleID(empNewRole);
+    db.promise().query(`UPDATE employee SET role_id = '${newRoleID}' WHERE id = '${oldRoleID}'`)
+    .then(([rows,fields])=>{
+        console.log('------------')
+        console.log("Employee updated!")
+        viewEmployees();
+    })
+
 }
 //Function for resetting the ID column-auto increment after deleting a row
 //May not actually be needed, but keeping it in just in case I want to implement it later.
