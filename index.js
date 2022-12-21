@@ -294,24 +294,25 @@ const addDepartment = (dept_name) =>{
         })
     })
 }
-const getRoleID2 = async (empName)=>{
+const getEmpID = async (empName)=>{
     let splitName = empName.split(' ');
-    let roleID;
-    await db.promise().query(`SELECT role_id FROM employee WHERE first_name = '${splitName[0]}' AND last_name = '${splitName[1]}'`)
+    let ID;
+    await db.promise().query(`SELECT id FROM employee WHERE first_name = '${splitName[0]}' AND last_name = '${splitName[1]}'`)
     .then(([rows,fields])=>{
-        roleID =  rows[0].role_id;
+        ID =  rows[0].id;
     })
-    return roleID
+    return ID
 }
 const updateEmployeeRole = async (empName, empNewRole)=>{
-    let oldRoleID = await getRoleID2(empName);
+    let empID = await getEmpID(empName);
     let newRoleID = await getRoleID(empNewRole);
-    db.promise().query(`UPDATE employee SET role_id = '${newRoleID}' WHERE id = '${oldRoleID}'`)
+    db.promise().query(`UPDATE employee SET role_id = '${newRoleID}' WHERE id = '${empID}'`)
     .then(([rows,fields])=>{
         console.log('------------')
         console.log("Employee updated!")
         viewEmployees();
     })
+    .catch(error=>{throw err;})
 
 }
 //Function for resetting the ID column-auto increment after deleting a row
